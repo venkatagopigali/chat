@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Offline P2P Chat - Manual WebRTC Signaling</title>
+<style>
+  :root {
+    --color-primary: #3f51b5;
+    --color-secondary: #f50057;
+    --color-bg: #f0f2f5;
+    --color-white: #fff;
+    --color-gray-light: #d1d9e6;
+    --color-text: #222;
+    --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-family);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    padding: 10px;
+  }
+  .container {
+    background: var(--color-white);
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    width: 100%;
+    max-width: 700px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 90vh;
+  }
+  header {
+    background: var(--color-primary);
+    color: var(--color-white);
+    padding: 20px;
+    font-size: 1.8rem;
+    font-weight: 700;
+    text-align: center;
+    user-select: none;
+  }
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+  }
+  .section {
+    margin-bottom: 20px;
+  }
+  label {
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: inline-block;
+  }
+  textarea, input, select {
+    width: 100%;
+    border-radius: 8px;
+    border: 1.5px solid var(--color-gray-light);
+    padding: 10px;
+    font-family: monospace, monospace;
+    font-size: 1rem;
+    resize: vertical;
+    background: #fafafa;
+  }
+  textarea::placeholder, input::placeholder {
+    color: #888;
+    font-style: italic;
+  }
+  button {
+    padding: 12px 24px;
+    font-weight: 700;
+    font-size: 1rem;
+    border: none;
+    border-radius: 24px;
+    cursor: pointer;
+    background: var(--color-primary);
+    color: var(--color-white);
+    transition: background-color 0.3s ease;
+    user-select: none;
+    width: fit-content;
+  }
+  button:disabled {
+    background: var(--color-gray-light);
+    cursor: not-allowed;
+  }
+  #status {
+    margin-top: 10px;
+    font-weight: 600;
+  }
+  .chat-area {
+    flex: 1;
+    background: #e9eefa;
+    border-radius: 8px;
+    padding: 10px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .message {
+    margin-bottom: 10px;
+    max-width: 75%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    word-wrap: break-word;
+    font-size: 1rem;
+    line-height: 1.3;
+  }
+  .message.self {
+    background: var(--color-primary);
+    color: var(--color-white);
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+  .message.remote {
+    background: #ffffffcc;
+    color: var(--color-text);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 0 8px rgba(0,0,0,0.05);
+  }
+  .input-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+  }
+  .input-row input[type="text"] {
+    flex: 1;
+    border-radius: 24px;
+    font-size: 1rem;
+    padding: 12px 20px;
+    border: 1.5px solid var(--color-gray-light);
+    outline: none;
+  }
+  .input-row input[type="text"]:focus {
+    border-color: var(--color-primary);
+  }
+
+  /* Scrollbar styling */
+  .chat-area::-webkit-scrollbar {
+    width: 8px;
+  }
+  .chat-area::-webkit-scrollbar-thumb {
+    background: var(--color-gray-light);
+    border-radius: 4px;
+  }
+  .chat-area::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  @media (max-width: 600px) {
+    .container {
+      height: 95vh;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="container" role="main" aria-label="Offline peer to peer chat application with manual signaling">
+    <header>Offline P2P Chat (Manual Signaling)</header>
+    <main>
+      <div class="section" id="signaling-section">
+        <label for="mode-select">Select Mode:</label>
+        <select id="mode-select" aria-controls="signaling-interface">
+          <option value="">-- Choose --</option>
+          <option value="offer">Create Offer (Initiator)</option>
+          <option value="answer">Connect Answer (Receiver)</option>
+        </select>
+      </div>
+
+      <div class="section" id="signaling-interface" style="display:none;">
+        <div id="create-offer" style="display:none;">
+          <button id="btn-create-offer" aria-label="Create WebRTC offer">Create Offer</button>
+          <label for="offer-sdp">Offer SDP (Copy this and send to remote):</label>
+          <textarea id="offer-sdp" rows="4" readonly aria-live="polite" aria-atomic="true" placeholder="Offer SDP will appear here"></textarea>
+          <label for="answer-sdp">Paste Answer SDP here:</label>
+          <textarea id="answer-sdp" rows="4" placeholder="Paste remote answer SDP"></textarea>
+          <button id="btn-accept-answer" aria-label="Accept remote answer" disabled>Accept Answer</button>
+        </div>
+
+        <div id="connect-answer" style="display:none;">
+          <label for="remote-offer-sdp">Paste Offer SDP here:</label>
+          <textarea id="remote-offer-sdp" rows="4" placeholder="Paste remote offer SDP"></textarea>
+          <button id="btn-create-answer" aria-label="Create answer">Create Answer</button>
+          <label for="local-answer-sdp" style="margin-top:10px;">Answer SDP (Copy this and send to remote):</label>
+          <textarea id="local-answer-sdp" rows="4" readonly aria-live="polite" aria-atomic="true" placeholder="Answer SDP will appear here"></textarea>
+        </div>
+
+        <div id="status" role="alert" aria-live="polite" style="margin-top: 15px; font-weight: 700;"></div>
+      </div>
+
+      <div class="section" id="chat-section" style="display:none; flex-direction: column; height: 100%;">
+        <div class="chat-area" id="chat-messages" aria-live="polite" aria-atomic="false"></div>
+        <div class="input-row">
+          <input type="text" id="chat-input" aria-label="Type your message" placeholder="Type your message..." autocomplete="off" />
+          <button id="btn-send-message" disabled aria-label="Send chat message">Send</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+<script>
+  (() => {
+    const modeSelect = document.getElementById('mode-select');
+    const signalingInterface = document.getElementById('signaling-interface');
+    const createOfferDiv = document.getElementById('create-offer');
+    const connectAnswerDiv = document.getElementById('connect-answer');
+
+    const btnCreateOffer = document.getElementById('btn-create-offer');
+    const offerSdpTextarea = document.getElementById('offer-sdp');
+    const answerSdpTextarea = document.getElementById('answer-sdp');
+    const btnAcceptAnswer = document.getElementById('btn-accept-answer');
+
+    const remoteOfferSdpTextarea = document.getElementById('remote-offer-sdp');
+    const btnCreateAnswer = document.getElementById('btn-create-answer');
+    const localAnswerSdpTextarea = document.getElementById('local-answer-sdp');
+
+    const statusDiv = document.getElementById('status');
+
+    const chatSection = document.getElementById('chat-section');
+    const chatMessages = document.getElementById('chat-messages');
+    const chatInput = document.getElementById('chat-input');
+    const btnSendMessage = document.getElementById('btn-send-message');
+
+    let pc = null;
+    let dataChannel = null;
+    let isInitiator = false;
+
+    // Enable or disable buttons based on input
+    answerSdpTextarea.addEventListener('input', () => {
+      btnAcceptAnswer.disabled = answerSdpTextarea.value.trim() === '';
+    });
+    remoteOfferSdpTextarea.addEventListener('input', () => {
+      btnCreateAnswer.disabled = remoteOfferSdpTextarea.value.trim() === '';
+    });
+
+    function logStatus(message, isError = false) {
+      statusDiv.textContent = message;
+      statusDiv.style.color = isError ? 'var(--color-secondary)' : 'var(--color-primary)';
+    }
+
+    function appendMessage(text, isSelf) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message ' + (isSelf ? 'self' : 'remote');
+      msgDiv.textContent = text;
+      chatMessages.appendChild(msgDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function resetConnection() {
+      if (dataChannel) {
+        dataChannel.close();
+        dataChannel = null;
+      }
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      chatMessages.innerHTML = '';
+      chatInput.value = '';
+      btnSendMessage.disabled = true;
+      chatSection.style.display = 'none';
+      signalingInterface.style.display = '';
+      logStatus('');
+    }
+
+    // Setup PeerConnection and DataChannel for initiator
+    function setupInitiator() {
+      pc = new RTCPeerConnection({
+        iceServers: []
+      });
+
+      dataChannel = pc.createDataChannel('chat');
+      setupDataChannel();
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate === null) {
+          // ICE gathering finished
+          offerSdpTextarea.value = JSON.stringify(pc.localDescription);
+          logStatus('Offer created. Copy and send the offer SDP to the other device.');
+        }
+      };
+
+      pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(err => {
+        logStatus('Error creating offer: ' + err.message, true);
+      });
+    }
+
+    // Setup PeerConnection for receiver
+    function setupReceiver() {
+      pc = new RTCPeerConnection({
+        iceServers: []
+      });
+
+      pc.ondatachannel = (event) => {
+        dataChannel = event.channel;
+        setupDataChannel();
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate === null) {
+          localAnswerSdpTextarea.value = JSON.stringify(pc.localDescription);
+          logStatus('Answer created. Copy and send the answer SDP to the other device.');
+        }
+      };
+    }
+
+    // Setup data channel event handlers
+    function setupDataChannel() {
+      dataChannel.onopen = () => {
+        logStatus('Data channel open! You can start chatting.');
+        signalingInterface.style.display = 'none';
+        chatSection.style.display = 'flex';
+        chatInput.focus();
+        btnSendMessage.disabled = false;
+      };
+      dataChannel.onclose = () => {
+        logStatus('Data channel closed.', true);
+        btnSendMessage.disabled = true;
+      };
+      dataChannel.onerror = (error) => {
+        logStatus('Data channel error: ' + error.message, true);
+      };
+      dataChannel.onmessage = (event) => {
+        appendMessage(event.data, false);
+      };
+    }
+
+    // Handle mode selection
+    modeSelect.addEventListener('change', () => {
+      resetConnection();
+      const val = modeSelect.value;
+      if (val === 'offer') {
+        createOfferDiv.style.display = 'block';
+        connectAnswerDiv.style.display = 'none';
+        signalingInterface.style.display = '';
+        chatSection.style.display = 'none';
+        isInitiator = true;
+      } else if (val === 'answer') {
+        createOfferDiv.style.display = 'none';
+        connectAnswerDiv.style.display = 'block';
+        signalingInterface.style.display = '';
+        chatSection.style.display = 'none';
+        isInitiator = false;
+      } else {
+        createOfferDiv.style.display = 'none';
+        connectAnswerDiv.style.display = 'none';
+        signalingInterface.style.display = 'none';
+        chatSection.style.display = 'none';
+        isInitiator = false;
+      }
+    });
+
+    // Create offer button click
+    btnCreateOffer.addEventListener('click', () => {
+      logStatus('Creating offer...');
+      setupInitiator();
+    });
+
+    // Accept answer button click for initiator
+    btnAcceptAnswer.addEventListener('click', () => {
+      let answer;
+      try {
+        answer = JSON.parse(answerSdpTextarea.value);
+      } catch (e) {
+        logStatus('Invalid answer SDP JSON.', true);
+        return;
+      }
+      pc.setRemoteDescription(answer).then(() => {
+        logStatus('Answer accepted. Waiting for data channel to open...');
+      }).catch(err => {
+        logStatus('Error setting remote description: ' + err.message, true);
+      });
+    });
+
+    // Create answer button click for receiver
+    btnCreateAnswer.addEventListener('click', () => {
+      let offer;
+      try {
+        offer = JSON.parse(remoteOfferSdpTextarea.value);
+      } catch (e) {
+        logStatus('Invalid offer SDP JSON.', true);
+        return;
+      }
+      logStatus('Creating answer...');
+      setupReceiver();
+      pc.setRemoteDescription(offer).then(() => {
+        return pc.createAnswer();
+      }).then(answer => {
+        return pc.setLocalDescription(answer);
+      }).catch(err => {
+        logStatus('Error during answer creation: ' + err.message, true);
+      });
+    });
+
+    // Send chat message
+    btnSendMessage.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !btnSendMessage.disabled) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    function sendMessage() {
+      const msg = chatInput.value.trim();
+      if (!msg) return;
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(msg);
+        appendMessage(msg, true);
+        chatInput.value = '';
+        chatInput.focus();
+      }
+    }
+  })();
+</script>
+</body>
+</html>
+
